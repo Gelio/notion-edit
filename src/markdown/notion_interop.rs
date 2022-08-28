@@ -1,8 +1,29 @@
 use crate::notion::BlockWithChildren;
 
+#[derive(Debug)]
+enum ParserState {
+    Idle,
+    ProcessingList(Vec<super::tag::OrderedListItem>),
+    /// A tag can be buffered in the following scenario:
+    /// 1. A list is being processed. No tags are emitted. The list is buffered.
+    /// 2. Another tag is encountered. The list is finished and is emitted. The tag
+    ///    that was parsed in this call cannot be emitted right away, because the parser
+    ///    only emits a single tag at a time. Thus, it needs to be buffered.
+    /// 3. The tag from the previous call will be emitted for the next tag. The next tag
+    ///    will be buffered.
+    /// 4. The final buffered tag will be emitted at the end, in the final `flush` call.
+    WithBufferedTag(super::tag::Tag),
+}
+
+impl Default for ParserState {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct NotionToMarkdownParser {
-    current_list_items: Option<Vec<super::tag::OrderedListItem>>,
+    state: ParserState,
 }
 
 impl NotionToMarkdownParser {
@@ -11,48 +32,82 @@ impl NotionToMarkdownParser {
         use notion::models::Block;
 
         // TODO: ensure that children are empty in most cases
-        // TODO: close lists before processing other items
         match &value.block {
-            Block::Heading1 { heading_1, .. } => Some(Tag::Heading {
+            Block::Heading1 { heading_1, .. } => self.next_tag(Tag::Heading {
                 level: HeadingLevel::H1,
                 text: Self::parse_rich_text(&heading_1.rich_text),
             }),
-            Block::Heading2 { heading_2, .. } => Some(Tag::Heading {
+            Block::Heading2 { heading_2, .. } => self.next_tag(Tag::Heading {
                 level: HeadingLevel::H2,
                 text: Self::parse_rich_text(&heading_2.rich_text),
             }),
-            Block::Heading3 { heading_3, .. } => Some(Tag::Heading {
+            Block::Heading3 { heading_3, .. } => self.next_tag(Tag::Heading {
                 level: HeadingLevel::H3,
                 text: Self::parse_rich_text(&heading_3.rich_text),
             }),
-            Block::Paragraph { paragraph, .. } => Some(Tag::Paragraph {
+            Block::Paragraph { paragraph, .. } => self.next_tag(Tag::Paragraph {
                 text: Self::parse_rich_text(&paragraph.rich_text),
             }),
             Block::NumberedListItem {
                 numbered_list_item, ..
             } => {
-                let current_list_items = self.current_list_items.get_or_insert(Vec::new());
-
                 let children_parser = Self::default();
-                current_list_items.push(super::tag::OrderedListItem {
+                let next_list_item = super::tag::OrderedListItem {
                     text: Self::parse_rich_text(&numbered_list_item.rich_text),
                     children: children_parser.feed(value.children.iter()).collect(),
-                });
+                };
 
-                None
+                match self.state {
+                    ParserState::Idle => {
+                        let current_list_items = vec![next_list_item];
+                        self.state = ParserState::ProcessingList(current_list_items);
+                        None
+                    }
+                    ParserState::ProcessingList(ref mut current_list_items) => {
+                        current_list_items.push(next_list_item);
+                        None
+                    }
+                    ParserState::WithBufferedTag(_) => {
+                        let current_list_items = vec![next_list_item];
+
+                        // NOTE: we need ownership over the buffered_tag
+                        match std::mem::replace(
+                            &mut self.state,
+                            ParserState::ProcessingList(current_list_items),
+                        ) {
+                            ParserState::WithBufferedTag(buffered_tag) => Some(buffered_tag),
+                            _ => unreachable!("this code is in a WithBufferedTag branch"),
+                        }
+                    }
+                }
             }
-            _ => todo!(),
+            _ => todo!("block not implemented"),
         }
     }
 
-    fn flush(self) -> Option<super::tag::Tag> {
-        if let Some(current_list_items) = self.current_list_items {
-            return Some(super::tag::Tag::OrderedList {
-                items: current_list_items,
-            });
+    fn next_tag(&mut self, tag: super::tag::Tag) -> Option<super::tag::Tag> {
+        if let Some(previous_tag) = self.maybe_flush_processed_tag() {
+            self.state = ParserState::WithBufferedTag(tag);
+            Some(previous_tag)
+        } else {
+            Some(tag)
         }
+    }
 
-        None
+    fn maybe_flush_processed_tag(&mut self) -> Option<super::tag::Tag> {
+        let state = std::mem::replace(&mut self.state, ParserState::Idle);
+
+        match state {
+            ParserState::Idle => None,
+            ParserState::ProcessingList(current_list_items) => Some(super::tag::Tag::OrderedList {
+                items: current_list_items,
+            }),
+            ParserState::WithBufferedTag(tag) => Some(tag),
+        }
+    }
+
+    fn flush(mut self) -> Option<super::tag::Tag> {
+        self.maybe_flush_processed_tag()
     }
 
     pub fn feed<'a, I>(self, blocks: I) -> MarkdownTagIterator<'a, I>
