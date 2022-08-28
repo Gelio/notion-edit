@@ -5,7 +5,10 @@ use ::notion::{
     NotionApi,
 };
 
-use crate::{markdown::notion_interop::NotionToMarkdownParser, notion::get_all_block_children};
+use crate::{
+    markdown::{notion_interop::NotionToMarkdownParser, to_cmark::get_pulldown_cmark_events},
+    notion::get_all_block_children,
+};
 
 mod markdown;
 mod notion;
@@ -13,7 +16,7 @@ mod notion;
 // TODO:
 // 1. ✅ Fetch the page and all its blocks (probably use the API directly, avoid the notion_rs crate)
 //
-// 2. Parse the page into a markdown document.
+// 2. ✅ Parse the page into a markdown document.
 //      Supported nodes:
 //      1. Numbered lists
 //      2. Paragraphs
@@ -26,7 +29,7 @@ mod notion;
 //      4. External links
 //      5. Code blocks
 //
-// 3. Write that parsed page into a Markdown file
+// 3. ✅ Write that parsed page into a Markdown file
 // 4. Read the Markdown file from disk and parse it into that structure
 // 5. Recreate that parsed page in Notion (replace the entire document)
 // 6. Smarter diffing: compare which parts changed and only update these documents (React-like)
@@ -48,5 +51,11 @@ async fn main() {
     let parsed_tags: Vec<_> = NotionToMarkdownParser::default()
         .feed(page_blocks.iter())
         .collect();
-    println!("Tags: {:#?}", parsed_tags);
+    println!("Tags: {parsed_tags:#?}");
+
+    let events = parsed_tags.iter().flat_map(get_pulldown_cmark_events);
+    let mut buf = String::new();
+    pulldown_cmark_to_cmark::cmark(events, &mut buf).expect("serialization failed");
+
+    println!("{buf}");
 }
