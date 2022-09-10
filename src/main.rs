@@ -4,6 +4,7 @@ use ::notion::{
     ids::{BlockId, PageId},
     NotionApi,
 };
+use dotenv::dotenv;
 
 use crate::{
     markdown::{notion_interop::NotionToMarkdownParser, to_cmark::get_pulldown_cmark_events},
@@ -36,6 +37,9 @@ mod notion;
 
 #[tokio::main]
 async fn main() {
+    // NOTE: a missing `.env` file is not a problem
+    dotenv().ok();
+
     let notion_api_key =
         std::env::var("NOTION_API_KEY").expect("NOTION_API_KEY environment variable to be defined");
     let notion_api = NotionApi::new(notion_api_key).expect("could not create NotionApi");
