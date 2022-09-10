@@ -548,6 +548,7 @@ dependencies = [
  "pretty_assertions",
  "pulldown-cmark",
  "pulldown-cmark-to-cmark",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
