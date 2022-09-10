@@ -99,9 +99,18 @@ where
     }
 
     fn parse_ordered_list_item(&mut self) -> super::tag::OrderedListItem {
-        match self.event_iterator.next().expect("paragraph for list item") {
-            Event::Start(pulldown_cmark::Tag::Paragraph) => {}
-            _ => unreachable!("list items must have paragraph immediately inside"),
+        match self.event_iterator.peek().expect("paragraph for list item") {
+            Event::Start(pulldown_cmark::Tag::Paragraph) => {
+                self.event_iterator
+                    .next()
+                    .expect("consume the paragraph start");
+            }
+            Event::Text(_) => {}
+            event => {
+                unreachable!(
+                    "list items must have paragraph or text immediately inside, found {event:#?}"
+                )
+            }
         }
 
         // TODO: handle text modifiers
@@ -111,11 +120,9 @@ where
             event => unreachable!("paragraph is immediately followed by text, not by {event:?}"),
         };
 
-        assert_eq!(
-            self.event_iterator.next(),
-            Some(Event::End(pulldown_cmark::Tag::Paragraph)),
-            "end of paragraph"
-        );
+        // NOTE: consume the optional paragraph inside the list item
+        self.event_iterator
+            .next_if_eq(&Event::End(pulldown_cmark::Tag::Paragraph));
 
         let end_item_event = Event::End(pulldown_cmark::Tag::Item);
         let mut children: Vec<super::tag::Tag> = Vec::new();
@@ -245,5 +252,32 @@ More description";
             get_document_tags(),
             "different parse result"
         );
+    }
+
+    #[test]
+    fn parses_larger_document() {
+        let mut event_parser = pulldown_cmark::Parser::new(
+            "# Summary
+
+1. Something to do
+
+1. Here
+   
+   1. Second level list item
+      
+      Second level list item’s paragraph
+      
+      1. Third level list
+
+## Subheading
+
+1. Done something
+
+1. Done something else
+
+1. New point",
+        );
+
+        PulldownCMarkEventParser::new(&mut event_parser).parse();
     }
 }
