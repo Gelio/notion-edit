@@ -1,4 +1,6 @@
-use crate::notion::BlockWithChildren;
+use std::iter::FromIterator;
+
+use crate::{markdown::tag::Paragraph, notion_api::BlockWithChildren};
 
 #[derive(Debug)]
 enum ParserState {
@@ -45,9 +47,9 @@ impl NotionToMarkdownParser {
                 level: HeadingLevel::H3,
                 text: Self::parse_rich_text(&heading_3.rich_text),
             }),
-            Block::Paragraph { paragraph, .. } => self.next_tag(Tag::Paragraph {
+            Block::Paragraph { paragraph, .. } => self.next_tag(Tag::Paragraph(Paragraph {
                 text: Self::parse_rich_text(&paragraph.rich_text),
-            }),
+            })),
             Block::NumberedListItem {
                 numbered_list_item, ..
             } => {
@@ -120,10 +122,8 @@ impl NotionToMarkdownParser {
         }
     }
 
-    fn parse_rich_text(
-        rich_text: &Vec<notion::models::text::RichText>,
-    ) -> Vec<super::tag::RichText> {
-        rich_text.into_iter().map(Into::into).collect()
+    fn parse_rich_text(rich_text: &[notion::models::text::RichText]) -> Vec<super::tag::RichText> {
+        rich_text.iter().map(Into::into).collect()
     }
 }
 
@@ -144,14 +144,14 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         let parser = self.parser.as_mut()?;
 
-        while let Some(block) = self.blocks.next() {
+        for block in self.blocks.by_ref() {
             if let Some(parsed_tag) = parser.parse_block(block) {
                 return Some(parsed_tag);
             }
         }
 
         let parser = self.parser.take().expect("was Some before");
-        return parser.flush();
+        parser.flush()
     }
 }
 
@@ -162,9 +162,52 @@ impl From<&notion::models::text::RichText> for super::tag::RichText {
         Self {
             text: match value {
                 RichText::Text { text, .. } => text.content.clone(),
-                RichText::Equation { .. } => unimplemented!("equation"),
-                RichText::Mention { .. } => todo!("mentions"),
+                RichText::Equation { .. } => {
+                    unimplemented!("Equations are not planned to be implemented")
+                }
+                RichText::Mention { .. } => {
+                    todo!("Mentions are not implemented yet. Encountered mention: {value:#?}")
+                }
             },
+        }
+    }
+}
+
+impl From<&super::tag::RichText> for notion::models::text::RichText {
+    fn from(rich_text: &super::tag::RichText) -> Self {
+        Self::Text {
+            text: ::notion::models::text::Text {
+                link: None,
+                content: rich_text.text.to_string(),
+            },
+            rich_text: ::notion::models::text::RichTextCommon {
+                annotations: Some(::notion::models::text::Annotations {
+                    bold: Some(false),
+                    code: Some(false),
+                    color: Some(::notion::models::text::TextColor::Default),
+                    italic: Some(false),
+                    underline: Some(false),
+                    strikethrough: Some(false),
+                }),
+                href: None,
+                plain_text: rich_text.text.to_string(),
+            },
+        }
+    }
+}
+
+// This impl seems pointless, as there already is a From for the reference.
+// TODO: remove this impl From and see if the code can be adapted to work without it
+impl From<super::tag::RichText> for notion::models::text::RichText {
+    fn from(value: super::tag::RichText) -> Self {
+        value.into()
+    }
+}
+
+impl FromIterator<super::tag::RichText> for notion::models::Text {
+    fn from_iter<T: IntoIterator<Item = super::tag::RichText>>(iter: T) -> Self {
+        notion::models::Text {
+            rich_text: iter.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -355,12 +398,12 @@ mod tests {
                                     text: vec![crate::markdown::tag::RichText {
                                         text: "Second level list item".to_string()
                                     }],
-                                    children: vec![Tag::Paragraph {
+                                    children: vec![Tag::Paragraph(Paragraph {
                                         text: vec![crate::markdown::tag::RichText {
                                             text: "Second level item's extra description"
                                                 .to_string()
                                         }]
-                                    }]
+                                    })]
                                 }]
                             }],
                         }
@@ -372,11 +415,11 @@ mod tests {
                         text: "Details".to_string()
                     }]
                 },
-                Tag::Paragraph {
+                Tag::Paragraph(Paragraph {
                     text: vec![crate::markdown::tag::RichText {
                         text: "More description".to_string()
                     }]
-                }
+                })
             ]
         )
     }

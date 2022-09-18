@@ -1,6 +1,6 @@
 use pulldown_cmark::{CowStr, Event};
 
-pub fn get_pulldown_cmark_events(tag: &super::tag::Tag) -> impl Iterator<Item = Event> {
+pub fn get_pulldown_cmark_events(tag: &super::tag::Tag) -> Vec<Event> {
     match tag {
         super::tag::Tag::Heading { level, text } => {
             let tag = pulldown_cmark::Tag::Heading(level.into(), None, Vec::new());
@@ -11,7 +11,7 @@ pub fn get_pulldown_cmark_events(tag: &super::tag::Tag) -> impl Iterator<Item = 
             events.push(Event::End(tag));
             events
         }
-        super::tag::Tag::Paragraph { text } => {
+        super::tag::Tag::Paragraph(super::tag::Paragraph { text }) => {
             let tag = pulldown_cmark::Tag::Paragraph;
 
             let mut events = Vec::with_capacity(text.len() + 2);
@@ -46,10 +46,9 @@ pub fn get_pulldown_cmark_events(tag: &super::tag::Tag) -> impl Iterator<Item = 
             events
         }
     }
-    .into_iter()
 }
 
-fn rich_text_to_events(text_parts: &Vec<super::tag::RichText>) -> impl Iterator<Item = Event> {
+fn rich_text_to_events(text_parts: &[super::tag::RichText]) -> impl Iterator<Item = Event> {
     text_parts.iter().flat_map(Into::<Vec<_>>::into)
 }
 
@@ -71,7 +70,7 @@ impl<'a> From<&'a super::tag::RichText> for Vec<pulldown_cmark::Event<'a>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::markdown::tag::{OrderedListItem, Tag};
+    use crate::markdown::tag::{OrderedListItem, Paragraph, Tag};
 
     use super::*;
 
@@ -100,11 +99,11 @@ mod tests {
                                 text: vec![crate::markdown::tag::RichText {
                                     text: "Second level list item".to_string(),
                                 }],
-                                children: vec![Tag::Paragraph {
+                                children: vec![Tag::Paragraph(Paragraph {
                                     text: vec![crate::markdown::tag::RichText {
                                         text: "Second level item's extra description".to_string(),
                                     }],
-                                }],
+                                })],
                             }],
                         }],
                     },
@@ -116,11 +115,11 @@ mod tests {
                     text: "Details".to_string(),
                 }],
             },
-            Tag::Paragraph {
+            Tag::Paragraph(Paragraph {
                 text: vec![crate::markdown::tag::RichText {
                     text: "More description".to_string(),
                 }],
-            },
+            }),
         ]
     }
 

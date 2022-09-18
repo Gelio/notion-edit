@@ -16,13 +16,17 @@ pub enum HeadingLevel {
 pub struct RichText {
     pub text: String,
     // TODO: support **strong**, _emphasis_, ~strikethrough``
+    // https://github.com/Gelio/notion-edit/issues/1
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Paragraph {
+    pub text: Vec<RichText>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Tag {
-    Paragraph {
-        text: Vec<RichText>,
-    },
+    Paragraph(Paragraph),
     Heading {
         level: HeadingLevel,
         text: Vec<RichText>,

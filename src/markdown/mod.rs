@@ -11,7 +11,9 @@ mod tests {
 
     fn assert_parse_and_serialize(document: &str) {
         let mut event_parser = pulldown_cmark::Parser::new(document);
-        let parsed_document = PulldownCMarkEventParser::new(&mut event_parser).parse();
+        let parsed_document = PulldownCMarkEventParser::new(&mut event_parser)
+            .parse()
+            .expect("successful parsing of the document");
 
         let events = parsed_document.iter().flat_map(get_pulldown_cmark_events);
         let mut buf = String::new();

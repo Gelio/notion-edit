@@ -1,9 +1,19 @@
 use std::iter::Peekable;
 
 use pulldown_cmark::Event;
+use thiserror::Error;
 
 pub struct PulldownCMarkEventParser<I> {
     event_iterator: I,
+}
+
+#[derive(Debug, Error)]
+pub enum ParseError<'a> {
+    #[error("unexpected heading level {0}, Notion only supports heading levels up to 3")]
+    UnexpectedHeadingLevel(pulldown_cmark::HeadingLevel),
+
+    #[error("unimplemented tag")]
+    UnimplementedTag(pulldown_cmark::Tag<'a>),
 }
 
 impl<'a, I> PulldownCMarkEventParser<Peekable<I>>
@@ -16,17 +26,17 @@ where
         }
     }
 
-    pub fn parse(mut self) -> Vec<super::tag::Tag> {
+    pub fn parse(mut self) -> Result<Vec<super::tag::Tag>, ParseError<'a>> {
         let mut tags: Vec<super::tag::Tag> = Vec::new();
 
         while let Some(event) = self.event_iterator.next() {
-            tags.push(self.parse_single_event(event));
+            tags.push(self.parse_single_event(event)?);
         }
 
-        tags
+        Ok(tags)
     }
 
-    fn parse_single_event(&mut self, event: Event) -> super::tag::Tag {
+    fn parse_single_event(&mut self, event: Event<'a>) -> Result<super::tag::Tag, ParseError<'a>> {
         match event {
             Event::Start(tag) => match tag {
                 pulldown_cmark::Tag::Heading(original_heading_level, None, _) => {
@@ -40,7 +50,7 @@ where
                         .next_if_eq(&pulldown_cmark::Event::Start(pulldown_cmark::Tag::Item))
                         .is_some()
                     {
-                        items.push(self.parse_ordered_list_item());
+                        items.push(self.parse_ordered_list_item()?);
                     }
 
                     assert_eq!(
@@ -49,10 +59,12 @@ where
                         "end of list tag"
                     );
 
-                    super::tag::Tag::OrderedList { items }
+                    Ok(super::tag::Tag::OrderedList { items })
                 }
-                pulldown_cmark::Tag::Paragraph => self.parse_paragraph(),
-                tag => unimplemented!("tag type {tag:?} not implemented"),
+                pulldown_cmark::Tag::Paragraph => {
+                    Ok(super::tag::Tag::Paragraph(self.parse_paragraph()))
+                }
+                tag => Err(ParseError::UnimplementedTag(tag)),
             },
             Event::End(_) => {
                 unreachable!(
@@ -66,63 +78,63 @@ where
         }
     }
 
+    /// Parses a markdown heading.
+    /// Assumes the Event::Start(Heading) event was already consumed.
     fn parse_heading(
         &mut self,
         original_heading_level: pulldown_cmark::HeadingLevel,
-    ) -> super::tag::Tag {
+    ) -> Result<super::tag::Tag, ParseError<'a>> {
         let heading_level = match original_heading_level {
-            pulldown_cmark::HeadingLevel::H1 => super::tag::HeadingLevel::H1,
-            pulldown_cmark::HeadingLevel::H2 => super::tag::HeadingLevel::H2,
-            pulldown_cmark::HeadingLevel::H3 => super::tag::HeadingLevel::H3,
-            _ => unimplemented!("heading level not supported by Notion"),
-        };
+            pulldown_cmark::HeadingLevel::H1 => Ok(super::tag::HeadingLevel::H1),
+            pulldown_cmark::HeadingLevel::H2 => Ok(super::tag::HeadingLevel::H2),
+            pulldown_cmark::HeadingLevel::H3 => Ok(super::tag::HeadingLevel::H3),
+            _ => Err(ParseError::UnexpectedHeadingLevel(original_heading_level)),
+        }?;
 
-        // TODO: handle text modifiers
-        // TODO: handle multiple text events
-        let text = match self.event_iterator.next().expect("non empty text") {
-            Event::Text(text) => text,
-            event => unreachable!("heading is immediately followed by text, found {event:#?}"),
-        };
-        match self.event_iterator.next().expect("non empty end tag") {
+        let text = self.parse_text();
+        assert!(!text.is_empty(), "empty heading");
+
+        match self
+            .event_iterator
+            .next()
+            .expect("unexpected end of events, expected end of heading")
+        {
             Event::End(pulldown_cmark::Tag::Heading(..)) => {}
             event => unreachable!(
                 "start heading should have a matching end heading event, found {event:#?}"
             ),
         }
 
-        super::tag::Tag::Heading {
+        Ok(super::tag::Tag::Heading {
             level: heading_level,
-            text: vec![super::tag::RichText {
-                text: text.to_string(),
-            }],
-        }
+            text,
+        })
     }
 
-    fn parse_ordered_list_item(&mut self) -> super::tag::OrderedListItem {
-        match self.event_iterator.peek().expect("paragraph for list item") {
+    /// Parses an ordered list item with its content.
+    /// Assumes the start event for the list item was already consumed.
+    fn parse_ordered_list_item(&mut self) -> Result<super::tag::OrderedListItem, ParseError<'a>> {
+        let paragraph = match self
+            .event_iterator
+            .peek()
+            .expect("unexpected end of events, expected list item to have some content")
+        {
             Event::Start(pulldown_cmark::Tag::Paragraph) => {
                 self.event_iterator
                     .next()
-                    .expect("consume the paragraph start");
+                    .expect("the start of the paragraph was just peeked, so it must exist");
+                self.parse_paragraph()
             }
-            Event::Text(_) => {}
+            Event::Text(_) => super::tag::Paragraph {
+                text: self.parse_text(),
+            },
+
             event => {
                 unreachable!(
                     "list items must have paragraph or text immediately inside, found {event:#?}"
                 )
             }
-        }
-
-        // TODO: handle text modifiers
-        // TODO: handle multiple text events
-        let text = match self.event_iterator.next().expect("text inside paragraph") {
-            Event::Text(text) => text,
-            event => unreachable!("paragraph is immediately followed by text, not by {event:?}"),
         };
-
-        // NOTE: consume the optional paragraph inside the list item
-        self.event_iterator
-            .next_if_eq(&Event::End(pulldown_cmark::Tag::Paragraph));
 
         let end_item_event = Event::End(pulldown_cmark::Tag::Item);
         let mut children: Vec<super::tag::Tag> = Vec::new();
@@ -131,31 +143,25 @@ where
             let event = self
                 .event_iterator
                 .next()
-                .expect("no abrupt end of events - the end item event should still appear");
+                .expect("abrupt end of events - the end item event should still appear");
 
             if event == end_item_event {
                 break;
             }
-            children.push(self.parse_single_event(event));
+            children.push(self.parse_single_event(event)?);
         }
 
-        let list_item = super::tag::OrderedListItem {
-            text: vec![super::tag::RichText {
-                text: text.to_string(),
-            }],
+        Ok(super::tag::OrderedListItem {
+            text: paragraph.text,
             children,
-        };
-
-        list_item
+        })
     }
 
-    fn parse_paragraph(&mut self) -> super::tag::Tag {
-        // TODO: handle text modifiers
-        // TODO: handle multiple text events
-        let text = match self.event_iterator.next().expect("text inside paragraph") {
-            Event::Text(text) => text,
-            event => unreachable!("paragraph is immediately followed by text, not by {event:?}"),
-        };
+    /// Parses a markdown paragraph.
+    /// Assumes the Event::Start(Paragraph) was already consumed.
+    fn parse_paragraph(&mut self) -> super::tag::Paragraph {
+        let text = self.parse_text();
+        assert!(!text.is_empty(), "empty paragraph");
 
         assert_eq!(
             self.event_iterator.next(),
@@ -163,11 +169,25 @@ where
             "end of paragraph"
         );
 
-        super::tag::Tag::Paragraph {
-            text: vec![super::tag::RichText {
+        super::tag::Paragraph { text }
+    }
+
+    /// Parses Event::Text until another type of event is encountered.{
+    fn parse_text(&mut self) -> Vec<super::tag::RichText> {
+        // TODO: handle text modifiers
+        // https://github.com/Gelio/notion-edit/issues/1
+
+        let mut parsed_text = Vec::new();
+        while let Some(Event::Text(text)) = self.event_iterator.peek() {
+            parsed_text.push(super::tag::RichText {
                 text: text.to_string(),
-            }],
+            });
+
+            // NOTE: consume the peeked event
+            self.event_iterator.next();
         }
+
+        parsed_text
     }
 }
 
@@ -175,7 +195,7 @@ where
 mod tests {
     use pretty_assertions::assert_eq;
 
-    use crate::markdown::tag::{OrderedListItem, Tag};
+    use crate::markdown::tag::{OrderedListItem, Paragraph, Tag};
 
     use super::*;
 
@@ -204,11 +224,11 @@ mod tests {
                                 text: vec![crate::markdown::tag::RichText {
                                     text: "Second level list item".to_string(),
                                 }],
-                                children: vec![Tag::Paragraph {
+                                children: vec![Tag::Paragraph(Paragraph {
                                     text: vec![crate::markdown::tag::RichText {
                                         text: "Second level item's extra description".to_string(),
                                     }],
-                                }],
+                                })],
                             }],
                         }],
                     },
@@ -220,11 +240,11 @@ mod tests {
                     text: "Details".to_string(),
                 }],
             },
-            Tag::Paragraph {
+            Tag::Paragraph(Paragraph {
                 text: vec![crate::markdown::tag::RichText {
                     text: "More description".to_string(),
                 }],
-            },
+            }),
         ]
     }
 
@@ -248,7 +268,7 @@ More description";
         let parsed_document = PulldownCMarkEventParser::new(&mut event_parser).parse();
 
         assert_eq!(
-            parsed_document,
+            parsed_document.unwrap(),
             get_document_tags(),
             "different parse result"
         );
@@ -278,6 +298,8 @@ More description";
 1. New point",
         );
 
-        PulldownCMarkEventParser::new(&mut event_parser).parse();
+        PulldownCMarkEventParser::new(&mut event_parser)
+            .parse()
+            .expect("successful parsing");
     }
 }
