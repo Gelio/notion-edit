@@ -1,12 +1,13 @@
 use std::env;
 use std::io::Read;
-use std::str::FromStr;
 use std::{fs::File, io::Write};
 
 use ::notion::{
     ids::{BlockId, PageId},
     NotionApi,
 };
+use clap::Parser;
+use cli::{Cli, Command};
 use dotenv::dotenv;
 use markdown::from_cmark::{ParseError, PulldownCMarkEventParser};
 use markdown::notion_interop::NotionToMarkdownParser;
@@ -18,61 +19,49 @@ use notion_api::client::{
 };
 use thiserror::Error;
 
+mod cli;
 mod markdown;
 mod notion_api;
-
-const MD_FILE_NAME: &str = "test.md";
-
-enum Action {
-    Fetch,
-    Sync,
-}
 
 #[tokio::main]
 async fn main() {
     // NOTE: a missing `.env` file is not a problem
     dotenv().ok();
+    let cli = Cli::parse();
 
     let notion_api_key =
         env::var("NOTION_API_KEY").expect("NOTION_API_KEY environment variable to be defined");
     let client = NotionClient::new(get_notion_reqwest_client(&notion_api_key));
     let notion_api = NotionApi::new(notion_api_key).expect("could not create NotionApi");
-    // TODO: get the page ID from CLI arguments
-    let page_id = PageId::from_str("0b89a6e8f0064acc8ec6e6902b039e3a").expect("invalid page ID");
 
-    let action = {
-        // TODO: get the action from CLI arguments
-        if env::args().into_iter().skip(1).any(|arg| arg == "sync") {
-            Action::Sync
-        } else {
-            Action::Fetch
-        }
-    };
+    match cli.command {
+        Command::Fetch { page_id, file } => {
+            let mut file = File::create(file).expect("MD file to create successfully");
+            let markdown_content = convert_page_to_markdown(&notion_api, page_id)
+                .await
+                .expect("Could not fetch the page");
 
-    match action {
-        Action::Fetch => {
-            let mut file = File::create(MD_FILE_NAME).expect("MD file to create successfully");
-            let markdown_content = convert_page_to_markdown(&notion_api, page_id).await;
             file.write_all(markdown_content.as_bytes())
-                .expect("markdown content to be written to a file");
+                .expect("Could not write the page markdown to a file");
         }
-        Action::Sync => {
-            let mut file = File::open(MD_FILE_NAME).expect("MD file to exist");
+        Command::Push { page_id, file } => {
+            let mut file = File::open(file).expect("File does not exist");
             let mut buf = String::new();
             file.read_to_string(&mut buf)
-                .expect("successfully read file");
+                .expect("Could not read the file");
             convert_markdown_to_page(&notion_api, &client, page_id, &buf)
                 .await
-                .expect("page to be synced");
+                .expect("Error when pushing the document to Notion");
         }
     }
 }
 
-async fn convert_page_to_markdown(notion_api: &NotionApi, page_id: PageId) -> String {
+async fn convert_page_to_markdown(
+    notion_api: &NotionApi,
+    page_id: PageId,
+) -> Result<String, notion::Error> {
     let block_id: BlockId = page_id.into();
-    let page_blocks = get_all_block_children(notion_api, &block_id)
-        .await
-        .expect("valid blocks");
+    let page_blocks = get_all_block_children(notion_api, &block_id).await?;
 
     let parsed_tags: Vec<_> = NotionToMarkdownParser::default()
         .feed(page_blocks.iter())
@@ -83,7 +72,7 @@ async fn convert_page_to_markdown(notion_api: &NotionApi, page_id: PageId) -> St
     pulldown_cmark_to_cmark::cmark(events, &mut buf).expect("serialization failed");
     buf.push('\n');
 
-    buf
+    Ok(buf)
 }
 
 #[derive(Error, Debug)]

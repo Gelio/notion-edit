@@ -26,7 +26,10 @@ pub enum AppendBlockChildrenError {
     },
 
     #[error("response cannot be deserialized")]
-    UnexpectedResponse { error: reqwest::Error },
+    UnexpectedBody(#[from] serde_json::Error),
+
+    #[error("unexpected API failure: {response}")]
+    UnexpectedApiFailure { response: String },
 }
 
 impl NotionClient {
@@ -55,22 +58,32 @@ impl NotionClient {
             parent_block_id
         );
         let children: Vec<_> = children.into_iter().collect();
+        let children_to_create = ChildrenToCreate { children };
 
-        let created_blocks = self
+        let response = self
             .client
             .patch(append_block_children_url)
-            .json(&children)
+            .json(&children_to_create)
             .send()
             .await
             .map_err(|error| AppendBlockChildrenError::AppendFailed {
                 error,
-                children,
+                children: children_to_create.children,
                 parent_block_id,
-            })?
-            .json::<ListResponse<notion::models::Block>>()
-            .await
-            .map_err(|error| AppendBlockChildrenError::UnexpectedResponse { error })?
-            .results;
+            })?;
+        let status_code = response.status();
+        let response_text = response.text().await.expect("could not get response text");
+
+        if !status_code.is_success() {
+            return Err(AppendBlockChildrenError::UnexpectedApiFailure {
+                response: response_text,
+            });
+        }
+
+        let created_blocks =
+            serde_json::from_str::<ListResponse<notion::models::Block>>(&response_text)
+                .map_err(AppendBlockChildrenError::UnexpectedBody)?
+                .results;
 
         Ok(created_blocks)
     }
