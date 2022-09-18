@@ -196,18 +196,13 @@ impl From<&super::tag::RichText> for notion::models::text::RichText {
     }
 }
 
-// This impl seems pointless, as there already is a From for the reference.
-// TODO: remove this impl From and see if the code can be adapted to work without it
-impl From<super::tag::RichText> for notion::models::text::RichText {
-    fn from(value: super::tag::RichText) -> Self {
-        value.into()
-    }
-}
-
 impl FromIterator<super::tag::RichText> for notion::models::Text {
     fn from_iter<T: IntoIterator<Item = super::tag::RichText>>(iter: T) -> Self {
         notion::models::Text {
-            rich_text: iter.into_iter().map(Into::into).collect(),
+            rich_text: iter
+                .into_iter()
+                .map(|ref rich_text| rich_text.into())
+                .collect(),
         }
     }
 }
