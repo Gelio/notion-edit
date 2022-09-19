@@ -132,25 +132,31 @@ mod tests {
 
     #[test]
     fn uuid_from_valid_notion_urls() {
-        let url_with_hash = "https://www.notion.so/gregorr/Test-page-0b89a6e8f0064acc8ec6e6902b039e3a#951424222c544b4896fc599a043f0c3d";
-        assert_eq!(
-            parse_page_id(url_with_hash).unwrap().to_string(),
-            "0b89a6e8-f006-4acc-8ec6-e6902b039e3a"
-        );
+        {
+            let url_with_hash = "https://www.notion.so/gregorr/Test-page-0b89a6e8f0064acc8ec6e6902b039e3a#951424222c544b4896fc599a043f0c3d";
+            assert_eq!(
+                parse_page_id(url_with_hash).unwrap().to_string(),
+                "0b89a6e8-f006-4acc-8ec6-e6902b039e3a"
+            );
+        }
 
-        let url_without_hash =
-            "https://www.notion.so/gregorr/Test-page-0b89a6e8f0064acc8ec6e6902b039e3a";
-        assert_eq!(
-            parse_page_id(url_without_hash).unwrap().to_string(),
-            "0b89a6e8-f006-4acc-8ec6-e6902b039e3a"
-        );
+        {
+            let url_without_hash =
+                "https://www.notion.so/gregorr/Test-page-0b89a6e8f0064acc8ec6e6902b039e3a";
+            assert_eq!(
+                parse_page_id(url_without_hash).unwrap().to_string(),
+                "0b89a6e8-f006-4acc-8ec6-e6902b039e3a"
+            );
+        }
 
-        let url_without_page_name =
-            "https://www.notion.so/gregorr/0b89a6e8f0064acc8ec6e6902b039e3a";
-        assert_eq!(
-            parse_page_id(url_without_page_name).unwrap().to_string(),
-            "0b89a6e8-f006-4acc-8ec6-e6902b039e3a"
-        );
+        {
+            let url_without_page_name =
+                "https://www.notion.so/gregorr/0b89a6e8f0064acc8ec6e6902b039e3a";
+            assert_eq!(
+                parse_page_id(url_without_page_name).unwrap().to_string(),
+                "0b89a6e8-f006-4acc-8ec6-e6902b039e3a"
+            );
+        }
 
         {
             let database_url_with_center_peek = "https://www.notion.so/gregorr/7659d7a185384403a1d603b828a21561?v=1156113b60bd45a48187e2fb5448f5ec&p=0b89a6e8f0064acc8ec6e6902b039e3a&pm=c";
@@ -165,21 +171,27 @@ mod tests {
 
     #[test]
     fn invalid_notion_urls() {
-        let github_url = "https://github.com/";
-        assert_eq!(
-            parse_page_id(github_url),
-            Err(ParsePageIdError::Url(
-                ParsePageIdFromUrlError::NotNotionHostname(Host::Domain("github.com".to_string()))
-            ))
-        );
+        {
+            let github_url = "https://github.com/";
+            assert_eq!(
+                parse_page_id(github_url),
+                Err(ParsePageIdError::Url(
+                    ParsePageIdFromUrlError::NotNotionHostname(Host::Domain(
+                        "github.com".to_string()
+                    ))
+                ))
+            );
+        }
 
-        let notion_url_without_page = "https://www.notion.so/";
-        assert_eq!(
-            parse_page_id(notion_url_without_page),
-            Err(ParsePageIdError::Url(
-                ParsePageIdFromUrlError::NotEnoughPathSegments
-            ))
-        );
+        {
+            let notion_url_without_page = "https://www.notion.so/";
+            assert_eq!(
+                parse_page_id(notion_url_without_page),
+                Err(ParsePageIdError::Url(
+                    ParsePageIdFromUrlError::NotEnoughPathSegments
+                ))
+            );
+        }
     }
 
     #[test]
