@@ -69,6 +69,14 @@ enum ParsePageIdFromUrlError {
 
     #[error("Invalid UUID in path. {0}")]
     InvalidUuidInPath(#[source] ParsePageIdFromUuidError),
+
+    #[error("Invalid UUID {uuid_candidate} in query parameters. {source}")]
+    InvalidUuidInQuery {
+        #[source]
+        source: ParsePageIdFromUuidError,
+
+        uuid_candidate: String,
+    },
 }
 
 fn parse_page_id_from_url<'a>(url: Url) -> Result<PageId, ParsePageIdFromUrlError> {
@@ -85,12 +93,22 @@ fn parse_page_id_from_url<'a>(url: Url) -> Result<PageId, ParsePageIdFromUrlErro
             .ok_or(ParsePageIdFromUrlError::NotEnoughPathSegments),
     }?;
 
-    let uuid_candidate = second_segment
+    let path_uuid_candidate = second_segment
         .split('-')
         .last()
         .ok_or(ParsePageIdFromUrlError::NotEnoughPathSegments)?;
 
-    parse_page_id_from_uuid(uuid_candidate).map_err(ParsePageIdFromUrlError::InvalidUuidInPath)
+    let path_uuid = parse_page_id_from_uuid(path_uuid_candidate)
+        .map_err(ParsePageIdFromUrlError::InvalidUuidInPath)?;
+
+    match url.query_pairs().find(|(key, _value)| key == "p") {
+        None => Ok(path_uuid),
+        Some((_key, query_uuid_candidate)) => parse_page_id_from_uuid(&query_uuid_candidate)
+            .map_err(|error| ParsePageIdFromUrlError::InvalidUuidInQuery {
+                source: error,
+                uuid_candidate: query_uuid_candidate.to_string(),
+            }),
+    }
 }
 
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -133,6 +151,16 @@ mod tests {
             parse_page_id(url_without_page_name).unwrap().to_string(),
             "0b89a6e8-f006-4acc-8ec6-e6902b039e3a"
         );
+
+        {
+            let database_url_with_center_peek = "https://www.notion.so/gregorr/7659d7a185384403a1d603b828a21561?v=1156113b60bd45a48187e2fb5448f5ec&p=0b89a6e8f0064acc8ec6e6902b039e3a&pm=c";
+            assert_eq!(
+                parse_page_id(database_url_with_center_peek)
+                    .unwrap()
+                    .to_string(),
+                "0b89a6e8-f006-4acc-8ec6-e6902b039e3a"
+            );
+        }
     }
 
     #[test]
